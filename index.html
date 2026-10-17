@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Endfield Menu (fan recreation)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&amp;family=Noto+Sans+SC:wght@100..900&amp;family=Inter:wght@500&amp;family=JetBrains+Mono:wght@400;600&amp;display=swap" rel="stylesheet" />
+<style>
+:root {
+  --ef-ink: #1A1C1E;
+  --ef-yellow: #FFDE00;
+  --ef-orange: #FD7500;
+  --ef-dim: rgba(10,12,14,0.52);
+
+  --ef-font-cn: "Noto Sans SC", sans-serif;
+  --ef-font-en: "Rajdhani", sans-serif;
+  --ef-font-num: "Inter", sans-serif;
+  --ef-font-mono: "JetBrains Mono", monospace;
+
+  --ef-zoom: 1.10;       /* camera zoom */
+}
+
+/* Set by app.js so the 1920×1080 stage fits the window, on its only two readers: the stage (transform) and the
+   wallpaper (background size, backdrop.js). Not inherited, so a resize restyles those two elements instead of every
+   element of the menu; it is not readable from :root (scripts read EF.stageScale). */
+@property --ef-stage-scale { syntax: '<number>'; inherits: false; initial-value: 1; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  font-family: var(--ef-font-cn); color: var(--ef-ink); background: #101214;
+  -webkit-font-smoothing: antialiased; user-select: none;
+}
+button { font: inherit; border: 0; background: none; cursor: pointer; color: inherit; }
+
+.ef-icon { width: 24px; height: 24px; display: block; flex: none; }
+/* Notification marker: a small orange diamond with a dark ring. */
+.ef-dot {
+  position: absolute; width: 11px; height: 11px; border-radius: 2px; transform: rotate(45deg); pointer-events: none;
+  background: var(--ef-orange); box-shadow: 0 0 0 2.5px rgba(16,18,20,0.85);
+}
+
+/* Background: the game world's blurred colours as a smooth colour field (backdrop-field.js, painted by backdrop.js). */
+.ef-wallpaper { position: fixed; inset: 0; z-index: 0; background: #1d2425; }
+body:not(.ef-closed) .ef-wallpaper { filter: blur(6px); }
+
+.ef-overlay { position: fixed; inset: 0; z-index: 10; background: var(--ef-dim); }
+/* The 0.25 s fade belongs to the closed state only: closing fades through it, while reopening shows the overlay at once
+   (on .ef-overlay itself it would soften the entrance's hard cut into a 0.25 s fade). After a played exit the backdrop
+   has already cut back to transparent, so the fade shows nothing; a direct close (reduced motion) fades through it from
+   the dimmed screen to the wallpaper. */
+body.ef-closed .ef-overlay { opacity: 0; pointer-events: none; visibility: hidden; transition: opacity 0.25s ease, visibility 0.25s; }
+body.ef-closed .ef-stage { opacity: 0; }
+
+.ef-stage {
+  position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; margin: -540px 0 0 -960px; z-index: 2;
+  transform: scale(var(--ef-stage-scale));
+}
+
+.ef-closed-hint {
+  position: fixed; left: 50%; bottom: 48px; transform: translateX(-50%); z-index: 30;
+  padding: 10px 22px; font-family: var(--ef-font-mono); font-size: 12px; letter-spacing: 0.2em;
+  color: rgba(255,255,255,0.75); background: rgba(12,14,16,0.8); border: 1px dashed rgba(255,255,255,0.3);
+  opacity: 0; pointer-events: none; transition: opacity 0.25s;
+}
+body.ef-closed .ef-closed-hint { opacity: 1; pointer-events: auto; }
+
+/* Screen-space post effect: a light shade that deepens towards the right (tuned against the game's tones). */
+.ef-post { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+.ef-post__grade {
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.02) 55%, rgba(0,0,0,0.13) 80%, rgba(0,0,0,0.13) 100%);
+}
+body.ef-closed .ef-post { display: none; }
+
+/* Entrance timeline, measured frame by frame on the game's menu transitions. t = 0 is the open input; the game first
+   spends 0.13 s hiding its HUD, which this page does not have, so every time here is the game's minus 0.13 s.
+   At 50-100 ms the backdrop cuts from the clear wallpaper to the dimmed, blurred one. From 60 ms only the disc grows in,
+   flat at first, and tilts up to face the camera (disc.js); the camera takes no part. The parts around it come in on
+   their own beats: the badge and the readouts settle by about 710 ms, the slide of the cards and tiles by about 890 ms.
+   Each component writes its own absolute delays (animation: name duration delay ...). app.js adds body.ef-in on every
+   open and removes it after ENTRANCE_MS (900), so every entrance animation must finish before that.
+   Like the exit's, the slot is declared on body at all times, so toggling body.ef-in changes no inherited value and
+   restyles only the animated parts instead of every element of the page (for that, the rules under body.ef-in name
+   their subjects by class). Only rules gated on body.ef-in may read it. */
+body {
+  --ef-in-cut: 50ms;   /* the backdrop's hard cut */
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* only the overlay's colour cuts in (fading the overlay itself would dim the disc with it); the shade follows */
+  body.ef-in .ef-overlay { animation: efBackdropIn 50ms var(--ef-in-cut) cubic-bezier(.65,0,.35,1) both; }
+  body.ef-in .ef-post { animation: efFade 50ms var(--ef-in-cut) cubic-bezier(.65,0,.35,1) both; }
+  /* the wallpaper turns from clear to blurred on the same curve (it is redrawn only during these 50 ms) */
+  body.ef-in .ef-wallpaper { animation: efWallBlurIn 50ms var(--ef-in-cut) cubic-bezier(.65,0,.35,1) both; }
+}
+@keyframes efFade { from { opacity: 0; } }
+@keyframes efBackdropIn { from { background-color: transparent; } }   /* lands on var(--ef-dim) */
+@keyframes efWallBlurIn { from { filter: none; } }                   /* lands on the blurred wallpaper */
+
+/* Exit timeline (same measurements, t = 0 at the close input; here the game's times are kept as they are). The parts
+   around the disc leave at 50-250 ms; the disc tips back and shrinks at 150-345 ms (disc.js) while the stage fades out
+   at 270-345 ms. Then only the dimmed backdrop is left, and at 450-500 ms it cuts back to the clear wallpaper. app.js
+   holds body.ef-out until the overlay's efBackdropOut has finished (animationend), then adds body.ef-closed; every exit
+   animation must finish within EXIT_MS (500).
+   The slots are declared on body at all times, so toggling body.ef-out changes no inherited value and restyles only
+   the animated parts instead of every element of the page. Only rules gated on body.ef-out may read them: an ungated
+   reader (even var(--ef-out-x, fallback)) would always resolve the slot. */
+body {
+  --ef-out-fade: 270ms;   /* the stage fades out */
+  --ef-out-cut: 450ms;    /* the backdrop cuts back to the wallpaper */
+}
+body.ef-out .ef-overlay { pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  body.ef-out .ef-stage { animation: efFadeOut 75ms var(--ef-out-fade) cubic-bezier(.333,0,.667,.333) both; }   /* only the disc is left by then */
+  body.ef-out .ef-overlay { animation: efBackdropOut 50ms var(--ef-out-cut) cubic-bezier(.65,0,.35,1) both; }
+  body.ef-out .ef-post { animation: efFadeOut 50ms var(--ef-out-cut) cubic-bezier(.65,0,.35,1) both; }
+  body.ef-out .ef-wallpaper { animation: efWallBlurOut 50ms var(--ef-out-cut) cubic-bezier(.65,0,.35,1) both; }
+}
+@keyframes efFadeOut { to { opacity: 0; } }
+@keyframes efBackdropOut { to { background-color: transparent; } }
+@keyframes efWallBlurOut { to { filter: none; } }
+</style>
+</head>
+<body>
+
+<div class="ef-wallpaper"></div>
+
+<div class="ef-overlay" id="efMenu">
+  <div class="ef-stage">
+    <div class="ef-scene">
+      <div class="ef-world" id="efWorld"></div>
+    </div>
+  </div>
+</div>
+
+<button class="ef-closed-hint" id="efClosedHint">MENU CLOSED · 点击重新打开</button>
+
+<div class="ef-post" aria-hidden="true">
+  <div class="ef-post__grade"></div>
+</div>
+
+<script src="components/shared-defs.js"></script>
+<script src="components/button-art.js"></script>
+<script src="components/shared-geometry.js"></script>
+<script src="components/shared-scene.js"></script>
+<script src="components/backdrop-field.js"></script>
+<script src="components/backdrop.js"></script>
+<script src="components/card-contours.js"></script>
+<script src="components/hud.js"></script>
+<script src="components/top-bar.js"></script>
+<script src="components/news-panel.js"></script>
+<script src="components/player-badge.js"></script>
+<script src="components/left-cards.js"></script>
+<script src="components/right-tiles.js"></script>
+<script src="components/disc.js"></script>
+<script src="components/transition-skeleton.js"></script>
+<script src="components/dial-rings.js"></script>
+<script src="components/level-pill.js"></script>
+<script src="components/energy-pill.js"></script>
+<script src="components/disc-buttons.js"></script>
+<script src="components/app.js"></script>
+</body>
+</html>
